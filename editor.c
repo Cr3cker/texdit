@@ -5,15 +5,14 @@
 #include "editor.h"
 
 
-void render_cursor(SDL_Renderer *renderer, TTF_Font *font, int total_line_width, int y) {
+void render_cursor(SDL_Renderer *renderer, TTF_Font *font, int cursor_position, int y) {
     int cursor_width, cursor_height;
-    TTF_SizeUTF8(font, " ", &cursor_width, &cursor_height); 
-    SDL_Rect cursor_rect = { .x = total_line_width + 5, .y = y, .w = cursor_width, .h = cursor_height};
+    TTF_SizeUTF8(font, " ", &cursor_width, &cursor_height);
+    SDL_Rect cursor_rect = { .x = cursor_position * cursor_width + 5, .y = y, .w = cursor_width, .h = cursor_height};
     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255); 
     SDL_RenderFillRect(renderer, &cursor_rect);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); 
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 }
-
 
 void render_line(SDL_Renderer *renderer, TTF_Font *font, char *line, SDL_Color color, float scaling_factor, int *y) {
     SDL_Surface *line_surface = TTF_RenderText_Blended(font, line, color);
@@ -34,11 +33,11 @@ void render_line(SDL_Renderer *renderer, TTF_Font *font, char *line, SDL_Color c
     SDL_FreeSurface(line_surface);
     SDL_DestroyTexture(texture);
 
-    *y += scaled_height; 
+    *y += scaled_height;
 }
 
 
-void render_text(char **buffer, TTF_Font *font, SDL_Color color, SDL_Window *window, SDL_Renderer *renderer, float scaling_factor) {
+void render_text(char **buffer, TTF_Font *font, SDL_Color color, SDL_Window *window, SDL_Renderer *renderer, float scaling_factor, int cursor_position) {
     size_t buffer_length = strlen(*buffer);
     int total_line_width = 0;
 
@@ -59,6 +58,17 @@ void render_text(char **buffer, TTF_Font *font, SDL_Color color, SDL_Window *win
         temp[0] = (*buffer)[i];
         temp[1] = '\0';
 
+        if (temp[0] == '\n') {
+            if (current_line[0] == '\0') {
+                current_line[0] = '\n';
+                current_line[1] = '\0';
+            }
+            render_line(renderer, font, current_line, color, scaling_factor, &y);
+            current_line[0] = '\0';
+            total_line_width = 0;
+            continue;
+        }
+
         int next_char_width, next_char_height;
         TTF_SizeUTF8(font, temp, &next_char_width, &next_char_height);
 
@@ -72,7 +82,7 @@ void render_text(char **buffer, TTF_Font *font, SDL_Color color, SDL_Window *win
         total_line_width += next_char_width;
     }
 
-    render_cursor(renderer, font, total_line_width, y);
+    render_cursor(renderer, font, cursor_position, y);
 
     if (current_line[0] != '\0') {
         render_line(renderer, font, current_line, color, scaling_factor, &y);
@@ -126,6 +136,7 @@ int main(void) {
     }
 
     buffer[0] = '\0';
+    size_t cursor_position = 0;
 
     // Main event loop
     while (!quit) {
@@ -133,6 +144,7 @@ int main(void) {
         // Get current window size
         int width, height;
         SDL_GetWindowSize(window, &width, &height);
+        size_t buffer_len = strlen(buffer);
 
         SDL_Event e;
         while(SDL_PollEvent(&e)) {
@@ -141,12 +153,42 @@ int main(void) {
                     quit = true;
                     break;
                 case SDL_TEXTINPUT: // Handling text input
-                    if (strlen(buffer) + strlen(e.text.text) < BUFFER_SIZE - 1) {
-                        strcat(buffer, e.text.text);
+                    if (buffer_len + strlen(e.text.text) < BUFFER_SIZE - 1) {
+                        memmove(&buffer[cursor_position + 1], &buffer[cursor_position], buffer_len - cursor_position + 1);
+                        buffer[cursor_position] = e.text.text[0];
+                        cursor_position++;
                     } else {
                         fprintf(stderr, "Buffer overflow\n");
                     }
                     break;
+                case SDL_KEYDOWN:
+                    switch (e.key.keysym.sym) {
+                        case SDLK_RETURN:
+                            if (buffer_len + 2 < BUFFER_SIZE - 1) {
+                                strcat(buffer, "\n");
+                            } else {
+                                fprintf(stderr, "Buffer overflow\n");
+                            }
+                            break;
+                        case SDLK_BACKSPACE:
+                            if (buffer_len > 0 && cursor_position > 0) {
+                                memmove(&buffer[cursor_position - 1], &buffer[cursor_position], buffer_len - cursor_position + 1);
+                                cursor_position--;
+                            } else {
+                                fprintf(stderr, "Buffer is empty or cursor is at the start\n");
+                            }
+                            break;
+                        case SDLK_LEFT:
+                            if (cursor_position > 0) {
+                                cursor_position--;
+                            }
+                            break;
+                        case SDLK_RIGHT:
+                            if (cursor_position < buffer_len) {
+                                cursor_position++;
+                            }
+                            break;
+                    }
             }
             break;
         }
@@ -159,7 +201,7 @@ int main(void) {
         if (SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) < 0) error("SDL_SetRenderDrawColor"); 
 
         // Buffer rendering 
-        render_text(&buffer, font, color, window, renderer, 1);
+        render_text(&buffer, font, color, window, renderer, 1, cursor_position);
 
         SDL_RenderPresent(renderer); // Show renderer on the window
     }
